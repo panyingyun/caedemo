@@ -12,6 +12,7 @@
 #include <vtkAssembly.h>
 #include <vtkCellData.h>
 #include <vtkColorTransferFunction.h>
+#include <vtkDataSetMapper.h>
 #include <vtkGeometryFilter.h>
 #include <vtkImageData.h>
 #include <vtkInteractorStyleTrackballCamera.h>
@@ -31,31 +32,56 @@
 #include <vtkTubeFilter.h>
 #include <vtkUnstructuredGrid.h>
 
+static vtkSmartPointer<vtkColorTransferFunction> generateColorMap(double range[2]) {
+    vtkSmartPointer<vtkColorTransferFunction> colorTransferFunction =
+        vtkSmartPointer<vtkColorTransferFunction>::New();
+
+    auto delta = range[1] - range[0];
+    colorTransferFunction->SetColorSpaceToDiverging();
+    colorTransferFunction->AddRGBPoint(range[0], 79.0 / 255.0, 73.0 / 255.0, 207.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(range[0] + delta * 1.0 / 7.0, 8.0 / 255.0, 3.0 / 255.0,
+                                       97.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(range[0] + delta * 2.0 / 7.0, 0.0, 248.0 / 255.0,
+                                       249.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(range[0] + delta * 3.0 / 7.0, 8.0 / 255.0, 135.0 / 255.0,
+                                       2.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(range[0] + delta * 4.0 / 7.0, 1.0, 1.0, 8.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(range[0] + delta * 5.0 / 7.0, 252.0 / 255.0, 98.0 / 255.0,
+                                       4.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(range[0] + delta * 6.0 / 7.0, 105.0 / 255.0, 0.0, 0.0);
+    colorTransferFunction->AddRGBPoint(range[1], 216.0 / 255.0, 84.0 / 255.0, 0.086);
+    return colorTransferFunction;
+}
+
 int main(int argc, char* argv[]) {
     // Reader wind dataset
     vtkNew<vtkStructuredPointsReader> reader;
     reader->SetFileName("wind.vtk");
-
-    // Convert to ploydata
-    vtkSmartPointer<vtkGeometryFilter> geometryFilter = vtkSmartPointer<vtkGeometryFilter>::New();
-    geometryFilter->SetInputConnection(reader->GetOutputPort());
-    geometryFilter->Update();
+    reader->Update();
 
     // Set ActiveVectors
-    auto grid = geometryFilter->GetOutput();
+    auto grid = reader->GetOutput();
     grid->GetPointData()->SetActiveVectors("wind_velocity");
+
+    // Create Color Map
+    auto modelArray = reader->GetOutput()->GetPointData()->GetArray("wind_speed");
+    double dataRange[2];
+    modelArray->GetRange(dataRange, -1);
+    auto modelcolormap = generateColorMap(dataRange);
+    std::cout << "dataRange[0]= " << dataRange[0] << std::endl;
+    std::cout << "dataRange[1]= " << dataRange[1] << std::endl;
 
     // Create Seed Source
     vtkNew<vtkPlaneSource> planeSource;
     planeSource->SetOrigin(17.5, 100.0, 0.0);
     planeSource->SetPoint1(17.5, 100.0, 16.0);
     planeSource->SetPoint2(60, 100.0, 0.0);
-    planeSource->SetXResolution(1);
+    planeSource->SetXResolution(2);
     planeSource->SetYResolution(100);
 
     // Create StreamTracer
     vtkNew<vtkStreamTracer> streamTracer;
-    streamTracer->SetInputConnection(geometryFilter->GetOutputPort());
+    streamTracer->SetInputConnection(reader->GetOutputPort());
     streamTracer->SetSourceConnection(planeSource->GetOutputPort());
     streamTracer->SetIntegrationDirectionToBoth();
     streamTracer->SetIntegratorTypeToRungeKutta45();
@@ -69,50 +95,32 @@ int main(int argc, char* argv[]) {
     streamTube->Update();
 
     // Create Color Map
-    auto streamTubeArray = grid->GetPointData()->GetArray("wind_velocity");
-
-    double dataRange[2];
-    streamTubeArray->GetRange(dataRange, -1);
-
-    std::cout << "dataRange[0]= " << dataRange[0] << std::endl;
-    std::cout << "dataRange[1]= " << dataRange[1] << std::endl;
-
-    auto delta = dataRange[1] - dataRange[0];
-    vtkNew<vtkColorTransferFunction> colorTransferFunction;
-    colorTransferFunction->SetColorSpaceToDiverging();
-    colorTransferFunction->AddRGBPoint(dataRange[0], 0.0, 4.0 / 255.0, 253.0 / 255.0);
-    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 1.0 / 6.0, 0.0, 165.0 / 255.0,
-                                       251.0 / 255.0);
-    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 2.0 / 6.0, 5.0 / 255.0, 253.0 / 255.0,
-                                       174.0 / 255.0);
-    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 3.0 / 6.0, 2.0 / 255.0, 1.0, 0.0);
-    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 4.0 / 6.0, 172.0 / 255.0, 1.0,
-                                       1.0 / 255.0);
-    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 5.0 / 6.0, 251.0 / 255.0,
-                                       176.0 / 255.0, 0.0);
-    colorTransferFunction->AddRGBPoint(dataRange[1], 210.0 / 255.0, 20.0 / 255.0, 12.0 / 255.0);
-
-    streamTube->GetOutput()->GetPointData()->SetScalars(
-        colorTransferFunction->MapScalars(streamTubeArray, VTK_COLOR_MODE_DEFAULT, 1));
+    auto tubeArray = streamTube->GetOutput()->GetPointData()->GetArray("wind_velocity");
+    double tubedataRange[2];
+    tubeArray->GetRange(tubedataRange, -1);
+    auto tubecolormap = generateColorMap(tubedataRange);
 
     // Model Mapper
-    vtkNew<vtkPolyDataMapper> modelmapper;
-    modelmapper->SetInputConnection(geometryFilter->GetOutputPort());
-    modelmapper->SetLookupTable(colorTransferFunction);
+    vtkNew<vtkDataSetMapper> modelmapper;
+    modelmapper->SetInputConnection(reader->GetOutputPort());
+    modelmapper->SetLookupTable(modelcolormap);
     modelmapper->SetScalarModeToUsePointData();
-    modelmapper->SelectColorArray("wind_velocity");
+    modelmapper->SelectColorArray("wind_speed");
     modelmapper->SetScalarRange(dataRange[0], dataRange[1]);
 
     // Stream Mapper
     vtkNew<vtkPolyDataMapper> streammapper;
     streammapper->SetInputConnection(streamTube->GetOutputPort());
+    streammapper->SetLookupTable(tubecolormap);
+    streammapper->SelectColorArray("wind_velocity");
+    streammapper->SetScalarModeToUsePointData();
+    streammapper->SetScalarRange(tubedataRange[0], tubedataRange[1]);
 
     //  model Actors
     vtkNew<vtkActor> modelactor;
     modelactor->SetMapper(modelmapper);
-    modelactor->GetProperty()->SetOpacity(0.35);
-    modelactor->GetProperty()->SetRepresentationToSurface();
-
+    modelactor->GetProperty()->SetRepresentationToWireframe();
+    modelactor->GetProperty()->SetOpacity(0.0);
     //  stream Actors
     vtkNew<vtkActor> streamactor;
     streamactor->SetMapper(streammapper);
