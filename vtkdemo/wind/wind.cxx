@@ -1,154 +1,142 @@
-#include <vtkActor.h>
+/*
+ * Author: panyingyun(at)gmail.com
+ *
+ * Description: Demo for Study VTK
+ *
+ */
+
+#include <cctype>
+#include <filesystem>
+#include <iostream>
+
 #include <vtkAssembly.h>
 #include <vtkCellData.h>
 #include <vtkColorTransferFunction.h>
-#include <vtkContourFilter.h>
-#include <vtkDataArray.h>
-#include <vtkDataSetMapper.h>
-#include <vtkDataSetTriangleFilter.h>
-#include <vtkDoubleArray.h>
-#include <vtkGPUVolumeRayCastMapper.h>
 #include <vtkGeometryFilter.h>
+#include <vtkImageData.h>
 #include <vtkInteractorStyleTrackballCamera.h>
-#include <vtkLine.h>
-#include <vtkOpenGLProjectedTetrahedraMapper.h>
-#include <vtkPiecewiseFunction.h>
+#include <vtkNew.h>
 #include <vtkPlaneSource.h>
 #include <vtkPointData.h>
 #include <vtkPointSource.h>
 #include <vtkPolyDataMapper.h>
-#include <vtkPolyDataNormals.h>
-#include <vtkPolyDataWriter.h>
 #include <vtkProperty.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRenderer.h>
 #include <vtkSmartPointer.h>
 #include <vtkStreamTracer.h>
+#include <vtkStructuredPoints.h>
 #include <vtkStructuredPointsReader.h>
-#include <vtkThreshold.h>
 #include <vtkTubeFilter.h>
 #include <vtkUnstructuredGrid.h>
-#include <vtkUnstructuredGridReader.h>
-#include <vtkVolumeProperty.h>
-#include <vtkWarpVector.h>
-#include <vtkXMLPolyDataReader.h>
-#include <vtkXMLUnstructuredGridReader.h>
-#ifdef BUILD_VR
-#include <vtkOpenVRRenderWindow.h>
-#include <vtkOpenVRRenderWindowInteractor.h>
-#include <vtkOpenVRRenderer.h>
-#endif
 
 int main(int argc, char* argv[]) {
-    // Create Point Position
-    double X[3] = {1.0, 0.0, 0.0};
-    double Y[3] = {0.0, 0.0, 1.0};
-    double Z[3] = {0.0, 0.0, 0.0};
+    // Reader wind dataset
+    vtkNew<vtkStructuredPointsReader> reader;
+    reader->SetFileName("wind.vtk");
 
-    // PID
-    vtkIdType PID[3];
-    // add pointdata and cell data
-    vtkSmartPointer<vtkPoints> points = vtkSmartPointer<vtkPoints>::New();
-    vtkSmartPointer<vtkCellArray> lines = vtkSmartPointer<vtkCellArray>::New();
+    // Convert to ploydata
+    vtkSmartPointer<vtkGeometryFilter> geometryFilter = vtkSmartPointer<vtkGeometryFilter>::New();
+    geometryFilter->SetInputConnection(reader->GetOutputPort());
+    geometryFilter->Update();
 
-    for (unsigned int i = 0; i < 3; i++) {
-        PID[i] = points->InsertNextPoint(X[i], Y[i], Z[i]);
-        std::cout << PID[i] << std::endl;
-    }
+    // Set ActiveVectors
+    auto grid = geometryFilter->GetOutput();
+    grid->GetPointData()->SetActiveVectors("wind_velocity");
 
-    vtkSmartPointer<vtkLine> line0 = vtkSmartPointer<vtkLine>::New();
-    line0->GetPointIds()->SetId(0, PID[0]);
-    line0->GetPointIds()->SetId(1, PID[1]);
+    // Create Seed Source
+    vtkNew<vtkPlaneSource> planeSource;
+    planeSource->SetOrigin(17.5, 100.0, 0.0);
+    planeSource->SetPoint1(17.5, 100.0, 16.0);
+    planeSource->SetPoint2(60, 100.0, 0.0);
+    planeSource->SetXResolution(1);
+    planeSource->SetYResolution(100);
 
-    vtkSmartPointer<vtkLine> line1 = vtkSmartPointer<vtkLine>::New();
-    line1->GetPointIds()->SetId(0, PID[0]);
-    line1->GetPointIds()->SetId(1, PID[2]);
+    // Create StreamTracer
+    vtkNew<vtkStreamTracer> streamTracer;
+    streamTracer->SetInputConnection(geometryFilter->GetOutputPort());
+    streamTracer->SetSourceConnection(planeSource->GetOutputPort());
+    streamTracer->SetIntegrationDirectionToBoth();
+    streamTracer->SetIntegratorTypeToRungeKutta45();
+    streamTracer->SetMaximumPropagation(60);
+    streamTracer->SetComputeVorticity(1);
 
-    vtkSmartPointer<vtkLine> line2 = vtkSmartPointer<vtkLine>::New();
-    line2->GetPointIds()->SetId(0, PID[1]);
-    line2->GetPointIds()->SetId(1, PID[2]);
+    // Line To Tube
+    vtkNew<vtkTubeFilter> streamTube;
+    streamTube->SetInputConnection(streamTracer->GetOutputPort());
+    streamTube->SetRadius(0.08);
+    streamTube->Update();
 
-    lines->InsertNextCell(line0);
-    lines->InsertNextCell(line1);
-    lines->InsertNextCell(line2);
-    //创建vtkPolyData类型的数据
-    vtkSmartPointer<vtkPolyData> polydata = vtkSmartPointer<vtkPolyData>::New();
-    polydata->SetPoints(points);
-    polydata->SetLines(lines);
+    // Create Color Map
+    auto streamTubeArray = grid->GetPointData()->GetArray("wind_velocity");
 
-    // add weight Data Array
-    vtkSmartPointer<vtkDoubleArray> weights = vtkSmartPointer<vtkDoubleArray>::New();
+    double dataRange[2];
+    streamTubeArray->GetRange(dataRange, -1);
 
-    auto nc = weights->GetNumberOfComponents();
-    auto nt = weights->GetNumberOfTuples();
-    auto nv = weights->GetNumberOfValues();
+    std::cout << "dataRange[0]= " << dataRange[0] << std::endl;
+    std::cout << "dataRange[1]= " << dataRange[1] << std::endl;
 
-    std::cout << "before nc = " << nc << std::endl;
-    std::cout << "before nt = " << nt << std::endl;
-    std::cout << "before nv = " << nv << std::endl;
+    auto delta = dataRange[1] - dataRange[0];
+    vtkNew<vtkColorTransferFunction> colorTransferFunction;
+    colorTransferFunction->SetColorSpaceToDiverging();
+    colorTransferFunction->AddRGBPoint(dataRange[0], 0.0, 4.0 / 255.0, 253.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 1.0 / 6.0, 0.0, 165.0 / 255.0,
+                                       251.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 2.0 / 6.0, 5.0 / 255.0, 253.0 / 255.0,
+                                       174.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 3.0 / 6.0, 2.0 / 255.0, 1.0, 0.0);
+    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 4.0 / 6.0, 172.0 / 255.0, 1.0,
+                                       1.0 / 255.0);
+    colorTransferFunction->AddRGBPoint(dataRange[0] + delta * 5.0 / 6.0, 251.0 / 255.0,
+                                       176.0 / 255.0, 0.0);
+    colorTransferFunction->AddRGBPoint(dataRange[1], 210.0 / 255.0, 20.0 / 255.0, 12.0 / 255.0);
 
-    weights->SetNumberOfComponents(1);
-    weights->InsertTuple1(0, 0.1);
-    weights->InsertTuple1(1, 0.5);
-    weights->InsertTuple1(2, 0.9);
-    weights->SetName("weights");
+    streamTube->GetOutput()->GetPointData()->SetScalars(
+        colorTransferFunction->MapScalars(streamTubeArray, VTK_COLOR_MODE_DEFAULT, 1));
 
-    nc = weights->GetNumberOfComponents();
-    nt = weights->GetNumberOfTuples();
-    nv = weights->GetNumberOfValues();
-    std::cout << "after nc = " << nc << std::endl;
-    std::cout << "after nt = " << nt << std::endl;
-    std::cout << "after nv = " << nv << std::endl;
+    // Model Mapper
+    vtkNew<vtkPolyDataMapper> modelmapper;
+    modelmapper->SetInputConnection(geometryFilter->GetOutputPort());
+    modelmapper->SetLookupTable(colorTransferFunction);
+    modelmapper->SetScalarModeToUsePointData();
+    modelmapper->SelectColorArray("wind_velocity");
+    modelmapper->SetScalarRange(dataRange[0], dataRange[1]);
 
-    // add RGB Data Array
-    vtkSmartPointer<vtkDoubleArray> rgb = vtkSmartPointer<vtkDoubleArray>::New();
+    // Stream Mapper
+    vtkNew<vtkPolyDataMapper> streammapper;
+    streammapper->SetInputConnection(streamTube->GetOutputPort());
 
-    nc = rgb->GetNumberOfComponents();
-    nt = rgb->GetNumberOfTuples();
-    nv = rgb->GetNumberOfValues();
+    //  model Actors
+    vtkNew<vtkActor> modelactor;
+    modelactor->SetMapper(modelmapper);
+    modelactor->GetProperty()->SetOpacity(0.35);
+    modelactor->GetProperty()->SetRepresentationToSurface();
 
-    std::cout << "nc = " << nc << std::endl;
-    std::cout << "nt = " << nt << std::endl;
-    std::cout << "nv = " << nv << std::endl;
+    //  stream Actors
+    vtkNew<vtkActor> streamactor;
+    streamactor->SetMapper(streammapper);
 
-    rgb->SetNumberOfComponents(2);
-    rgb->InsertTuple2(0, 0.1, 9.0);
-    rgb->InsertTuple2(1, 0.5, 5.0);
-    rgb->InsertTuple2(2, 0.9, 1.0);
-    rgb->SetName("rgb");
+    // Render
+    vtkNew<vtkRenderer> render;
+    vtkNew<vtkAssembly> assembly;
+    assembly->AddPart(modelactor);
+    assembly->AddPart(streamactor);
+    render->AddActor(assembly);
+    render->SetBackground(0.1, 0.2, 0.3);
 
-    nc = rgb->GetNumberOfComponents();
-    nt = rgb->GetNumberOfTuples();
-    nv = rgb->GetNumberOfValues();
-    std::cout << "nc = " << nc << std::endl;
-    std::cout << "nt = " << nt << std::endl;
-    std::cout << "nv = " << nv << std::endl;
+    // Render Window
+    vtkNew<vtkRenderWindow> renderWin;
+    renderWin->AddRenderer(render);
+    renderWin->SetSize(600, 600);
 
-    polydata->GetPointData()->SetScalars(weights);
-    //polydata->GetPointData()->AddArray(rgb);
+    // Render WindowInteractor
+    vtkNew<vtkRenderWindowInteractor> renderWinIneractor;
+    vtkNew<vtkInteractorStyleTrackballCamera> style;
+    renderWinIneractor->SetInteractorStyle(style);
+    renderWinIneractor->SetRenderWindow(renderWin);
+    renderWinIneractor->Initialize();
+    renderWinIneractor->Start();
 
-    polydata->GetCellData()->AddArray(weights);
-
-    //属性数据的访问
-	//访问数据方式有两种：
-	//1、通过元组下标进行访问
-	//2、通过GetComponent进行访问
-
-    //vtkDoubleArray* rgbarray =
-    //    vtkDoubleArray::SafeDownCast(polydata->GetPointData()->GetArray("rgb"));
-    //for (int i = 0; i < rgbarray->GetNumberOfTuples(); i++) {
-    //    auto w = rgbarray->GetTuple2(i);
-    //    std::cout << "w[" << i << "] = " << w[0] << " , " << w[1] << std::endl;
-    //    auto w0 = rgbarray->GetComponent(i, 0);
-    //    auto w1 = rgbarray->GetComponent(i, 1);
-    //    std::cout << "w0 = " << w0 << std::endl;
-    //    std::cout << "w1 = " << w1 << std::endl;
-    //}
-
-    // write point to vtkPolyData
-    vtkSmartPointer<vtkPolyDataWriter> writer = vtkSmartPointer<vtkPolyDataWriter>::New();
-    writer->SetFileName("E:\\michaelproject\\refactor\\vtkstudy\\ch01\\abc.vtk");
-    writer->SetInputData(polydata);
-    writer->Write();
+    return 0;
 }

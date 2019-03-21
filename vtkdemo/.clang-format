@@ -1,0 +1,10 @@
+---
+# Format C++ files
+Language: Cpp
+BasedOnStyle: Google
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+IndentCaseLabels: false
+# End of the document
+...
